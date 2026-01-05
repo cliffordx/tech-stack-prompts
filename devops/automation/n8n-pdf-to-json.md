@@ -70,6 +70,7 @@ You are a document parser. Extract structured data from the following text as JS
 
 Text: {{ $node["Extraction"].json["raw_text"] }}
 This instruction guides the model to output valid JSON, with dynamic keys based on content (e.g., for an invoice: {"invoice_number": "INV123", "date": "2026-01-05"}).
+
 4. Resilience & Output
 Error Handling: Key failure points include:
 	•	OCR Failure (e.g., poor image quality): Use n8n’s “Retry” on the OCR node (configure 3 attempts with exponential backoff). Fallback: Route to a “Set” node assigning default $json.raw_text = "OCR failed - manual review required".
