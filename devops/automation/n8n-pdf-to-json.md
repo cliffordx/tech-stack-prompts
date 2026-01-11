@@ -1,6 +1,8 @@
 1. System Overview & Trigger Strategy
    
-The PDF-to-JSON pipeline is designed to automate the ingestion, processing, and transformation of diverse PDF documents into structured, machine-readable JSON data. This enables seamless integration with downstream business systems such as CRM platforms, databases, or analytics tools. The workflow handles both digital PDFs with selectable text and scanned/image-based PDFs requiring optical character recognition (OCR). The final JSON output will follow a standardized schema tailored to the document type (e.g., invoices, contracts, or reports), including fields like document_type, extracted_data (a nested object with key-value pairs like invoice_number, date, total_amount), metadata (e.g., source_file, processing_timestamp), and confidence_scores for AI-extracted elements.
+The PDF-to-JSON pipeline is designed to automate the ingestion, processing, and transformation of diverse PDF documents into structured, machine-readable JSON data. This enables seamless integration with downstream business systems such as CRM platforms, databases, or analytics tools. 
+
+The workflow handles both digital PDFs with selectable text and scanned/image-based PDFs requiring optical character recognition (OCR). The final JSON output will follow a standardized schema tailored to the document type (e.g., invoices, contracts, or reports), including fields like document_type, extracted_data (a nested object with key-value pairs like invoice_number, date, total_amount), metadata (e.g., source_file, processing_timestamp), and confidence_scores for AI-extracted elements.
 
 For PDF ingestion in a scalable system, several methods are viable:
 	- n8n Native Webhook: Ideal for real-time API-driven uploads. Pros: Low latency, direct integration with external apps; Cons: Requires client-side implementation for file submission.
@@ -26,7 +28,6 @@ The workflow is structured as a linear sequence with branching for document type
 	◦	const page = await pdf.getPage(1);
 	◦	const content = await page.getTextContent();
 	◦	return [{ json: { is_scanned: content.items.length === 0 } }];
-	◦	
 	◦	Output to Next Node: Adds $json.is_scanned (boolean) to the item.
 - Node: If (Branching: Scanned vs. Digital)
 	◦	Purpose: Routes based on PDF type for appropriate extraction.
@@ -57,7 +58,9 @@ The workflow is structured as a linear sequence with branching for document type
 	◦	Input/Configuration: Condition on $json.destination (e.g., “api”, “db”, “storage”).
 	◦	Output: To respective endpoint nodes (e.g., HTTP Request for API, Postgres for DB).
 3. Extraction & Intelligence Layer
-Decision Logic: After downloading the PDF, use the “If” node to branch based on $json.is_scanned. For text-based PDFs (false branch), directly extract text. For scanned PDFs (true branch), apply OCR. Post-extraction, merge paths and feed raw text to AI for structuring. This ensures efficient handling without unnecessary OCR on digital files, reducing costs and latency.
+Decision Logic: After downloading the PDF, use the “If” node to branch based on $json.is_scanned. For text-based PDFs (false branch), directly extract text.
+
+For scanned PDFs (true branch), apply OCR. Post-extraction, merge paths and feed raw text to AI for structuring. This ensures efficient handling without unnecessary OCR on digital files, reducing costs and latency.
 Tool Recommendations:
 	•	Native Text-Based PDFs:
 	◦	Open-Source: pdf-parse (Node.js library) – Simple, lightweight for extracting text layers; integrate via n8n’s Code node.
@@ -75,30 +78,41 @@ Text: {{ $node["Extraction"].json["raw_text"] }}
 This instruction guides the model to output valid JSON, with dynamic keys based on content (e.g., for an invoice: {"invoice_number": "INV123", "date": "2026-01-05"}).
 
 4. Resilience & Output
-Error Handling: Key failure points include:
-	•	OCR Failure (e.g., poor image quality): Use n8n’s “Retry” on the OCR node (configure 3 attempts with exponential backoff). Fallback: Route to a “Set” node assigning default $json.raw_text = "OCR failed - manual review required".
-	•	AI Timeout/Invalid Output: Wrap AI node in a “Try/Catch” equivalent (use “If” post-AI to check for valid JSON; if not, retry or fallback to raw text).
-	•	Invalid JSON: In Validation node, use Code to parse and catch errors, logging via “Error Trigger” node to Slack/Email for monitoring.
+   
+#### Error Handling: Key failure points include:
+
+- OCR Failure (e.g., poor image quality): Use n8n’s “Retry” on the OCR node (configure 3 attempts with exponential backoff). Fallback: Route to a “Set” node assigning default $json.raw_text = "OCR failed - manual review required".
+- AI Timeout/Invalid Output: Wrap AI node in a “Try/Catch” equivalent (use “If” post-AI to check for valid JSON; if not, retry or fallback to raw text).
+- Invalid JSON: In Validation node, use Code to parse and catch errors, logging via “Error Trigger” node to Slack/Email for monitoring.
 Validation & Cleanup: Post-AI, employ a “Code” node for schema validation:
+```code
 const data = items[0].json.structured_data;
 if (!data.invoice_number) { throw new Error('Missing required field'); }
 // Normalization example
 data.date = new Date(data.date).toISOString();
 data.phone = data.phone.replace(/\D/g, '');
 return [{ json: { final_json: data } }];
+```
+
 This ensures required fields exist and formats are standardized (e.g., ISO dates, E.164 phones).
 Output Destinations: Use a “Switch” node to route based on $json.destination:
+
 	•	API: “HTTP Request” node (POST to endpoint, body: {{ $json.final_json }}).
 	•	Database: “Postgres” node (INSERT query with JSONB type for structured data).
 	•	Storage: “AWS S3” node (upload JSON file to output bucket). This allows flexible integration, with parallel outputs if needed via “Split In Batches”.
-Summary of Best Practices and Potential Pitfalls
-Best Practices:
+	
+### Summary of Best Practices and Potential Pitfalls
+
+### Best Practices:
+
 	•	Modularize with sub-workflows for reusability (e.g., separate OCR sub-flow).
 	•	Monitor via n8n’s built-in logging and integrate with tools like Sentry for error tracking.
 	•	Optimize costs: Use open-source tools where accuracy suffices; batch process for high volumes.
 	•	Security: Handle sensitive data with encryption (e.g., S3 SSE) and API keys in n8n credentials.
 	•	Testing: Simulate diverse PDFs (scanned/digital) and edge cases like multi-page or rotated docs.
-Potential Pitfalls:
+
+### Potential Pitfalls:
+
 	•	Over-reliance on AI: Models may hallucinate; always validate outputs and provide fallback human review paths.
 	•	Scalability Limits: n8n’s self-hosted nature requires horizontal scaling for >1000 docs/day; monitor resource usage during OCR/AI steps.
 	•	Dependency on External Services: API rate limits (e.g., OpenAI) could bottleneck; implement queuing with n8n’s “Wait” node.
